@@ -111,20 +111,31 @@ func runAsk(ag *agent.Agent, question string) {
 
 func runServe(ag *agent.Agent, model, listen string) {
 	srv := &proxy.Server{Agent: ag, Model: model + "-web"}
-	httpSrv := &http.Server{Addr: listen, Handler: srv.Handler()}
+	handler := srv.Handler()
 
-	go func() {
-		log.Printf("forager serving OpenAI-compatible API on http://%s/v1 (model %q)", listen, model+"-web")
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server: %v", err)
+	var servers []*http.Server
+	for _, addr := range strings.Split(listen, ",") {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
 		}
-	}()
+		httpSrv := &http.Server{Addr: addr, Handler: handler}
+		servers = append(servers, httpSrv)
+		go func(a string, s *http.Server) {
+			log.Printf("forager serving OpenAI-compatible API on http://%s/v1 (default model %q)", a, model)
+			if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("server %s: %v", a, err)
+			}
+		}(addr, httpSrv)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	<-ctx.Done()
 	log.Println("shutting down")
-	_ = httpSrv.Close()
+	for _, s := range servers {
+		_ = s.Close()
+	}
 }
 
 func usage() {

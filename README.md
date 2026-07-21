@@ -23,7 +23,9 @@ Two modes:
 - **`forager ask "question"`** — one-shot CLI research.
 - **`forager serve`** — OpenAI-compatible proxy. Point any existing client at
   `http://localhost:8090/v1` instead of LM Studio and it transparently gets a
-  web-enabled model (reported as `<model>-web`).
+  web-enabled model (reported as `<model>-web`). The `model` field in the request
+  is passed through to LM Studio (with or without the `-web` suffix); leave it
+  empty or use the default alias to get the configured default model.
 
 ## Setup
 
@@ -71,7 +73,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now forager
 | `LMSTUDIO_URL` / `-lm` | `http://localhost:1234/v1` | LM Studio API |
 | `SEARXNG_URL` / `-searx` | `http://localhost:8888` | SearXNG instance |
 | `FORAGER_MODEL` / `-model` | `qwen3-14b` | model id in LM Studio |
-| `FORAGER_LISTEN` / `-listen` | `127.0.0.1:8090` | proxy bind address |
+| `FORAGER_LISTEN` / `-listen` | `127.0.0.1:8090` | proxy bind address(es), comma-separated |
 | `-max-iter` | `12` | agent round-trip cap |
 | `-fetch-chars` | `12000` | max chars per page read |
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/swarmery/forager/internal/agent"
@@ -16,7 +17,7 @@ import (
 
 type Server struct {
 	Agent *agent.Agent
-	Model string // reported model name; incoming "model" field is ignored
+	Model string // default model reported/used when request doesn't specify one
 }
 
 type incomingRequest struct {
@@ -51,20 +52,31 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Model passthrough: "google/gemma-4-12b" or "google/gemma-4-12b-web" both work;
+	// empty or matching the default alias -> config default.
+	model := strings.TrimSuffix(strings.TrimSpace(req.Model), "-web")
+	if model == strings.TrimSuffix(s.Model, "-web") {
+		model = ""
+	}
+
 	start := time.Now()
-	answer, _, err := s.Agent.Run(r.Context(), req.Messages)
+	answer, _, err := s.Agent.RunModel(r.Context(), model, req.Messages)
 	if err != nil {
 		log.Printf("agent run failed: %v", err)
 		httpError(w, http.StatusBadGateway, "agent error: %v", err)
 		return
 	}
-	log.Printf("request served in %s", time.Since(start).Round(time.Millisecond))
+	log.Printf("request served in %s (model %q)", time.Since(start).Round(time.Millisecond), req.Model)
 
+	reported := s.Model
+	if model != "" {
+		reported = model + "-web"
+	}
 	resp := map[string]any{
 		"id":      fmt.Sprintf("forager-%d", time.Now().UnixNano()),
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
-		"model":   s.Model,
+		"model":   reported,
 		"choices": []map[string]any{{
 			"index":         0,
 			"message":       llm.Message{Role: "assistant", Content: answer},

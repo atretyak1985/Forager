@@ -21,9 +21,9 @@ Rules:
 
 type Config struct {
 	Model         string
-	MaxIterations int     // cap on model round-trips (default 12)
-	Temperature   float64 // default 0.2 for factual research
-	SystemPrompt  string  // override the default research prompt if set
+	MaxIterations int
+	Temperature   float64
+	SystemPrompt  string
 }
 
 type Agent struct {
@@ -31,7 +31,6 @@ type Agent struct {
 	registry *tools.Registry
 	cfg      Config
 
-	// OnEvent, if set, receives progress lines (tool calls, iterations) for logging/UI.
 	OnEvent func(format string, args ...any)
 }
 
@@ -51,9 +50,17 @@ func (a *Agent) event(format string, args ...any) {
 	}
 }
 
-// Run executes the loop for a full message history (system prompt is prepended
-// if the history doesn't start with one) and returns the final assistant message.
+// Run executes the loop with the default model from config.
 func (a *Agent) Run(ctx context.Context, history []llm.Message) (string, []llm.Message, error) {
+	return a.RunModel(ctx, "", history)
+}
+
+// RunModel executes the loop with an explicit model; "" means the config default.
+func (a *Agent) RunModel(ctx context.Context, model string, history []llm.Message) (string, []llm.Message, error) {
+	if model == "" {
+		model = a.cfg.Model
+	}
+
 	msgs := history
 	if len(msgs) == 0 || msgs[0].Role != "system" {
 		msgs = append([]llm.Message{{Role: "system", Content: a.cfg.SystemPrompt}}, msgs...)
@@ -63,7 +70,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message) (string, []llm.M
 
 	for i := 0; i < a.cfg.MaxIterations; i++ {
 		resp, err := a.llm.Chat(ctx, llm.ChatRequest{
-			Model:       a.cfg.Model,
+			Model:       model,
 			Messages:    msgs,
 			Tools:       a.registry.Definitions(),
 			Temperature: &temp,
@@ -75,9 +82,17 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message) (string, []llm.M
 		choice := resp.Choices[0]
 		msgs = append(msgs, choice.Message)
 
-		// No tool calls -> the model produced its final answer.
 		if len(choice.Message.ToolCalls) == 0 {
-			return choice.Message.Content, msgs, nil
+			if choice.Message.Content != "" {
+				return choice.Message.Content, msgs, nil
+			}
+			// Thinking models sometimes return empty content: nudge once for a final answer.
+			a.event("[iter %d] empty content, nudging for final answer", i+1)
+			msgs = append(msgs, llm.Message{
+				Role:    "user",
+				Content: "Provide your final answer now in plain text, with source URLs.",
+			})
+			continue
 		}
 
 		for _, tc := range choice.Message.ToolCalls {
@@ -93,13 +108,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message) (string, []llm.M
 		}
 	}
 
-	// Budget exhausted: ask the model to wrap up without tools.
 	msgs = append(msgs, llm.Message{
 		Role:    "user",
 		Content: "Tool budget exhausted. Summarize your findings now as a final answer with sources.",
 	})
 	resp, err := a.llm.Chat(ctx, llm.ChatRequest{
-		Model:       a.cfg.Model,
+		Model:       model,
 		Messages:    msgs,
 		Temperature: &temp,
 	})
@@ -111,7 +125,6 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message) (string, []llm.M
 	return final.Content, msgs, nil
 }
 
-// Ask is a convenience wrapper for a single question.
 func (a *Agent) Ask(ctx context.Context, question string) (string, error) {
 	answer, _, err := a.Run(ctx, []llm.Message{{Role: "user", Content: question}})
 	return answer, err

@@ -20,6 +20,8 @@ type Message struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	Name       string     `json:"name,omitempty"`
+	// Thinking models (e.g. qwen) put chain-of-thought here and may leave Content empty.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type ToolCall struct {
