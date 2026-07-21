@@ -1,5 +1,5 @@
 // Package proxy exposes an OpenAI-compatible /v1/chat/completions endpoint.
-// Clients (curl, chat UIs) talk to forager as if it were LM Studio,
+// Clients (n8n, Nytka, curl, chat UIs) talk to forager as if it were LM Studio,
 // and forager runs the web-research agent loop underneath.
 package proxy
 
@@ -17,7 +17,7 @@ import (
 
 type Server struct {
 	Agent *agent.Agent
-	Model string // default model reported/used when request doesn't specify one
+	Model string // default model alias reported by /v1/models (e.g. "qwen/qwen3.6-27b-web")
 }
 
 type incomingRequest struct {
@@ -52,8 +52,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Model passthrough: "google/gemma-4-12b" or "google/gemma-4-12b-web" both work;
-	// empty or matching the default alias -> config default.
+	// Model passthrough: clients may request any LM Studio model, with or
+	// without the "-web" suffix. Empty or matching the default alias -> config default.
 	model := strings.TrimSuffix(strings.TrimSpace(req.Model), "-web")
 	if model == strings.TrimSuffix(s.Model, "-web") {
 		model = ""

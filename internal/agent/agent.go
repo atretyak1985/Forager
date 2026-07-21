@@ -21,9 +21,9 @@ Rules:
 
 type Config struct {
 	Model         string
-	MaxIterations int
-	Temperature   float64
-	SystemPrompt  string
+	MaxIterations int     // cap on model round-trips (default 12)
+	Temperature   float64 // default 0.2 for factual research
+	SystemPrompt  string  // override the default research prompt if set
 }
 
 type Agent struct {
@@ -31,6 +31,7 @@ type Agent struct {
 	registry *tools.Registry
 	cfg      Config
 
+	// OnEvent, if set, receives progress lines (tool calls, iterations) for logging/UI.
 	OnEvent func(format string, args ...any)
 }
 
@@ -82,6 +83,7 @@ func (a *Agent) RunModel(ctx context.Context, model string, history []llm.Messag
 		choice := resp.Choices[0]
 		msgs = append(msgs, choice.Message)
 
+		// No tool calls -> the model is done (or stalled with empty content).
 		if len(choice.Message.ToolCalls) == 0 {
 			if choice.Message.Content != "" {
 				return choice.Message.Content, msgs, nil
@@ -108,6 +110,7 @@ func (a *Agent) RunModel(ctx context.Context, model string, history []llm.Messag
 		}
 	}
 
+	// Budget exhausted: ask the model to wrap up without tools.
 	msgs = append(msgs, llm.Message{
 		Role:    "user",
 		Content: "Tool budget exhausted. Summarize your findings now as a final answer with sources.",
@@ -125,6 +128,7 @@ func (a *Agent) RunModel(ctx context.Context, model string, history []llm.Messag
 	return final.Content, msgs, nil
 }
 
+// Ask is a convenience wrapper for a single question.
 func (a *Agent) Ask(ctx context.Context, question string) (string, error) {
 	answer, _, err := a.Run(ctx, []llm.Message{{Role: "user", Content: question}})
 	return answer, err
