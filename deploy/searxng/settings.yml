@@ -1,0 +1,12 @@
+# Minimal SearXNG config for forager.
+# use_default_settings pulls everything else from the image defaults.
+use_default_settings: true
+
+server:
+  secret_key: "CHANGE_ME_generate_with_openssl_rand_hex_32"
+  limiter: false          # local-only instance, no rate limiting needed
+
+search:
+  formats:
+    - html
+    - json                # REQUIRED: forager uses format=json

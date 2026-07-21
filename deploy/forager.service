@@ -1,0 +1,21 @@
+[Unit]
+Description=forager — web research proxy for LM Studio
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/forager serve
+Environment=LMSTUDIO_URL=http://localhost:1234/v1
+Environment=SEARXNG_URL=http://localhost:8888
+Environment=FORAGER_MODEL=qwen3-14b
+Environment=FORAGER_LISTEN=127.0.0.1:8090
+Restart=on-failure
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
