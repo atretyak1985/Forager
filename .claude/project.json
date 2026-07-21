@@ -1,0 +1,18 @@
+{
+  "apps": [],
+  "codePath": "/Volumes/Work/Forager",
+  "commitScopes": [],
+  "displayName": "forager",
+  "domainTerms": {
+    "product": "TODO: one line about the product"
+  },
+  "enabledPacks": [
+    "infra-pack",
+    "lsp-pack",
+    "web-pack"
+  ],
+  "mainApp": "TODO-main-app",
+  "name": "forager",
+  "repos": [],
+  "stack": {}
+}

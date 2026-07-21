@@ -1,0 +1,38 @@
+{
+  "enabledPlugins": {
+    "core@swarmery": true,
+    "infra-pack@swarmery": true,
+    "lsp-pack@swarmery": true,
+    "web-pack@swarmery": true
+  },
+  "env": {
+    "AGENT_PROJECT": "forager",
+    "AGENT_WORKSPACE_ROOT": "/Volumes/Work/swarmery-workspace"
+  },
+  "extraKnownMarketplaces": {
+    "swarmery": {
+      "source": {
+        "repo": "atretyak1985/swarmery",
+        "source": "github"
+      }
+    }
+  },
+  "permissions": {
+    "additionalDirectories": [
+      "/Volumes/Work/swarmery-workspace"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Edit(./.env)",
+      "Edit(./.env.*)",
+      "Write(./.env)",
+      "Write(./.env.*)"
+    ]
+  },
+  "statusLine": {
+    "command": "bash $CLAUDE_PROJECT_DIR/.claude/statusline/statusline.sh",
+    "type": "command"
+  }
+}
