@@ -11,6 +11,9 @@ WS="${FORAGER_WORKSPACE:-/srv/forager/workspace}"
 
 fail() { echo "SMOKE FAIL: $*" >&2; exit 1; }
 
+command -v curl >/dev/null || fail "curl not installed"
+command -v jq >/dev/null || fail "jq not installed"
+
 MODEL_AGENT=$(curl -sf "$BASE/v1/models" | jq -r '.data[].id' | grep -- '-agent$' | head -1) \
   || fail "cannot list models"
 [ -n "$MODEL_AGENT" ] || fail "no -agent model advertised"
@@ -37,10 +40,17 @@ ask "Use run_python to compute 17*23 and report only the number." | grep -q 391 
   || fail "python computation"
 echo "ok: run_python"
 
-# 3. memory across two independent requests
+# 3. memory across two independent requests. Local models are non-deterministic
+# about calling memory_search, so retry the recall a few times before failing.
 ask "Запам'ятай назавжди: кодове слово смок-тесту — barvinok-$STAMP" >/dev/null
-ask "Яке кодове слово смок-тесту? Скористайся пам'яттю." | grep -q "barvinok-$STAMP" \
-  || fail "memory recall"
+recalled=0
+for _ in 1 2 3; do
+  if ask "Яке кодове слово смок-тесту? Скористайся пам'яттю (memory_search)." | grep -q "barvinok-$STAMP"; then
+    recalled=1
+    break
+  fi
+done
+[ "$recalled" = 1 ] || fail "memory recall"
 echo "ok: memory"
 
 # 4. MCP (only if any mcp_ tool is configured — detected via config file)

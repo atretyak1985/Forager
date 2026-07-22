@@ -63,11 +63,12 @@ curl http://localhost:8090/v1/chat/completions \
 ### 4. Smoke test
 
 ```bash
-# Full run — exercises sandbox, Python, memory, and MCP (if configured):
-./deploy/smoke.sh
+# Full run — exercises sandbox, Python, memory, and MCP (if configured).
+# Optional base URL (defaults to http://localhost:8090); needs curl + jq.
+./deploy/smoke.sh [base-url]
 
 # Quick mode (healthz + models only) — also used as the deploy gate in deploy.sh:
-./deploy/smoke.sh --quick http://localhost:8090
+./deploy/smoke.sh --quick [base-url]
 ```
 
 ### Install as systemd service
