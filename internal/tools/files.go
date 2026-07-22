@@ -97,6 +97,10 @@ func (f *ReadFile) Call(_ context.Context, argsJSON string) (string, error) {
 	if start >= len(text) {
 		return fmt.Sprintf("Offset %d is beyond end of file (total %d chars).", start, len(text)), nil
 	}
+	// A caller-supplied offset may land mid-rune; align forward.
+	for start > 0 && start < len(text) && !isRuneStart(text[start]) {
+		start++
+	}
 	end := start + f.MaxChars
 	if end >= len(text) {
 		return text[start:], nil
@@ -200,7 +204,13 @@ func (f *ListDir) Call(_ context.Context, argsJSON string) (string, error) {
 			fmt.Fprintf(&b, "%s/\n", e.Name())
 			continue
 		}
-		info, _ := e.Info()
+		// Info() can fail if the entry was removed after ReadDir (TOCTOU);
+		// a nil FileInfo must not be dereferenced.
+		info, err := e.Info()
+		if err != nil || info == nil {
+			fmt.Fprintf(&b, "%s  (size unavailable)\n", e.Name())
+			continue
+		}
 		fmt.Fprintf(&b, "%s  (%d bytes)\n", e.Name(), info.Size())
 	}
 	return b.String(), nil

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -57,7 +58,7 @@ func (p *Python) Call(ctx context.Context, argsJSON string) (string, error) {
 		return "", fmt.Errorf("code is empty")
 	}
 
-	var rb [4]byte
+	var rb [8]byte
 	if _, err := rand.Read(rb[:]); err != nil {
 		return "", err
 	}
@@ -75,7 +76,7 @@ func (p *Python) Call(ctx context.Context, argsJSON string) (string, error) {
 	defer os.Remove(host)
 
 	timeout := clampTimeout(args.TimeoutSeconds)
-	res, err := p.Runner.Exec(ctx, fmt.Sprintf("python3 %s/%s", p.ContainerRoot, rel), timeout)
+	res, err := p.Runner.Exec(ctx, "python3 "+path.Join(p.ContainerRoot, rel), timeout)
 	if err != nil {
 		return "", err
 	}

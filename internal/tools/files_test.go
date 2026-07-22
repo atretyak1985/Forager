@@ -68,6 +68,22 @@ func TestReadFileOffsetWindow(t *testing.T) {
 	}
 }
 
+func TestFileToolsRejectTraversalViaCall(t *testing.T) {
+	ws := wsFixture(t)
+	if _, err := NewWriteFile(ws).Call(context.Background(),
+		`{"path":"../escape.txt","content":"evil"}`); err == nil {
+		t.Fatal("write_file: expected traversal rejection")
+	}
+	if _, err := NewReadFile(ws, 12000).Call(context.Background(),
+		`{"path":"/etc/passwd"}`); err == nil {
+		t.Fatal("read_file: expected traversal rejection")
+	}
+	if _, err := NewListDir(ws).Call(context.Background(),
+		`{"path":"a/../../x"}`); err == nil {
+		t.Fatal("list_dir: expected traversal rejection")
+	}
+}
+
 func TestListDir(t *testing.T) {
 	ws := wsFixture(t)
 	os.MkdirAll(filepath.Join(ws.Root, "sub"), 0755)
