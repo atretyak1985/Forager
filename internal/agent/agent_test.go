@@ -125,3 +125,28 @@ func TestPromptSuffixAppendedToSystemPrompt(t *testing.T) {
 		t.Fatalf("suffix missing from system prompt: %s", (*bodies)[0])
 	}
 }
+
+func TestPromptSuffixGraftedOntoClientSystemMessage(t *testing.T) {
+	srv, bodies := scriptedLM(t, []string{respFinal})
+	reg := tools.NewRegistry(stubTool{name: "stub", result: "r"})
+	ag := New(llm.New(srv.URL), reg, Config{
+		Model: "m", MaxIterations: 2,
+		PromptSuffix: func() string { return "MEMORY-INDEX-MARKER" },
+	})
+	// A serve client (Open WebUI, n8n) supplies its own system message.
+	history := []llm.Message{
+		{Role: "system", Content: "You are a helpful bot."},
+		{Role: "user", Content: "hi"},
+	}
+	if _, _, err := ag.Run(context.Background(), history); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains((*bodies)[0], "You are a helpful bot.") ||
+		!strings.Contains((*bodies)[0], "MEMORY-INDEX-MARKER") {
+		t.Fatalf("client system prompt + suffix both expected: %s", (*bodies)[0])
+	}
+	// The caller's slice must not be mutated.
+	if history[0].Content != "You are a helpful bot." {
+		t.Fatalf("caller history was mutated: %q", history[0].Content)
+	}
+}

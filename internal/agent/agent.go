@@ -76,15 +76,29 @@ func (a *Agent) RunModel(ctx context.Context, model string, history []llm.Messag
 		model = a.cfg.Model
 	}
 
+	// Evaluate the per-run prompt suffix (e.g. the current memory index) once.
+	var suffix string
+	if a.cfg.PromptSuffix != nil {
+		suffix = a.cfg.PromptSuffix()
+	}
+
 	msgs := history
-	if len(msgs) == 0 || msgs[0].Role != "system" {
+	switch {
+	case len(msgs) == 0 || msgs[0].Role != "system":
+		// No client system message: prepend ours, with the suffix appended.
 		prompt := a.cfg.SystemPrompt
-		if a.cfg.PromptSuffix != nil {
-			if extra := a.cfg.PromptSuffix(); extra != "" {
-				prompt += "\n\n" + extra
-			}
+		if suffix != "" {
+			prompt += "\n\n" + suffix
 		}
 		msgs = append([]llm.Message{{Role: "system", Content: prompt}}, msgs...)
+	case suffix != "":
+		// The client supplied its own system message (Open WebUI, n8n, …).
+		// Keep it but graft the suffix on, without mutating the caller's slice,
+		// so memory context is never silently dropped.
+		grafted := make([]llm.Message, len(msgs))
+		copy(grafted, msgs)
+		grafted[0].Content += "\n\n" + suffix
+		msgs = grafted
 	}
 
 	temp := a.cfg.Temperature
