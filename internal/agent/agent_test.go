@@ -86,6 +86,9 @@ func TestRunNudgesOnEmptyContent(t *testing.T) {
 	if got != "final answer" {
 		t.Fatalf("answer = %q", got)
 	}
+	if len(*bodies) != 2 {
+		t.Fatalf("expected 2 LM calls, got %d", len(*bodies))
+	}
 	if !strings.Contains((*bodies)[1], "final answer now") {
 		t.Fatalf("nudge message missing: %s", (*bodies)[1])
 	}
@@ -99,6 +102,9 @@ func TestRunForcesSummaryWhenBudgetExhausted(t *testing.T) {
 	}
 	if got != "final answer" {
 		t.Fatalf("answer = %q", got)
+	}
+	if len(*bodies) != 2 {
+		t.Fatalf("expected 2 LM calls, got %d", len(*bodies))
 	}
 	if !strings.Contains((*bodies)[1], "Tool budget exhausted") {
 		t.Fatalf("forced-summary message missing: %s", (*bodies)[1])
