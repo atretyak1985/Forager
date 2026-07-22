@@ -9,3 +9,15 @@ services:
     environment:
       - SEARXNG_BASE_URL=http://localhost:8888/
     restart: unless-stopped
+
+  sandbox:
+    build: ./sandbox
+    container_name: forager-sandbox
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 256
+    volumes:
+      - ${FORAGER_WORKSPACE:-/srv/forager/workspace}:/workspace
