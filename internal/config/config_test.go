@@ -18,9 +18,11 @@ func TestLoadMissingFileIsEmptyNotError(t *testing.T) {
 
 func TestLoadParsesServers(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(p, []byte(`{"mcpServers":{
+	if err := os.WriteFile(p, []byte(`{"mcpServers":{
 		"git":{"command":"mcp-server-git","args":["--repo","/workspace"]},
-		"ha":{"url":"http://ha:8123/mcp"}}}`), 0644)
+		"ha":{"url":"http://ha:8123/mcp"}}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 	f, err := Load(p)
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +34,9 @@ func TestLoadParsesServers(t *testing.T) {
 
 func TestLoadRejectsInvalidJSON(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bad.json")
-	os.WriteFile(p, []byte("{oops"), 0644)
+	if err := os.WriteFile(p, []byte("{oops"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Load(p); err == nil {
 		t.Fatal("expected error")
 	}

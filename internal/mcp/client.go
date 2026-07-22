@@ -95,6 +95,7 @@ func (c *Client) startLocked(ctx context.Context) error {
 		}
 		if err := cmd.Start(); err != nil {
 			stdin.Close()
+			stdout.Close() // Wait() never runs on a failed Start; close the fd ourselves
 			return fmt.Errorf("start mcp server %s: %w", c.Name, err)
 		}
 		c.proc = cmd

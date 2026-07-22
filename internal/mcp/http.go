@@ -64,7 +64,10 @@ func (c *Client) callHTTP(ctx context.Context, method string, params any) (json.
 				goto done
 			}
 		}
-		return nil, fmt.Errorf("mcp %s: SSE stream ended without response: %w", c.Name, sc.Err())
+		if err := sc.Err(); err != nil {
+			return nil, fmt.Errorf("mcp %s: SSE stream error: %w", c.Name, err)
+		}
+		return nil, fmt.Errorf("mcp %s: SSE stream ended without a matching response", c.Name)
 	default:
 		if err := json.NewDecoder(resp.Body).Decode(&jr); err != nil {
 			return nil, fmt.Errorf("mcp %s: decode: %w", c.Name, err)
