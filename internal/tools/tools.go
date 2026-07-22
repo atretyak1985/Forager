@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/swarmery/forager/internal/llm"
 )
@@ -25,7 +26,14 @@ type Registry struct {
 func NewRegistry(ts ...Tool) *Registry {
 	r := &Registry{tools: make(map[string]Tool, len(ts))}
 	for _, t := range ts {
-		r.tools[t.Definition().Function.Name] = t
+		name := t.Definition().Function.Name
+		// A later tool with a duplicate name would silently shadow an earlier
+		// one (e.g. two MCP servers exposing colliding tool names). Warn rather
+		// than drop it silently — the model would otherwise never see one tool.
+		if _, exists := r.tools[name]; exists {
+			log.Printf("warning: tool %q registered more than once; keeping the last registration", name)
+		}
+		r.tools[name] = t
 	}
 	return r
 }
