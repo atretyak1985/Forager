@@ -40,13 +40,21 @@ func (s *Server) Handler() http.Handler {
 }
 
 // splitModelProfile splits "qwen3-14b-agent" into ("qwen3-14b", "agent").
-// No known suffix means the default "web" profile with model passthrough.
+// No known suffix means the default "web" profile with model passthrough,
+// so a "web" agent is expected to always be registered. When several profile
+// suffixes could match, the longest (most specific) one wins — this keeps the
+// result deterministic regardless of map iteration order.
 func (s *Server) splitModelProfile(m string) (base, profile string) {
 	m = strings.TrimSpace(m)
+	best := ""
 	for p := range s.Agents {
-		if strings.HasSuffix(m, "-"+p) {
-			return strings.TrimSuffix(m, "-"+p), p
+		suffix := "-" + p
+		if strings.HasSuffix(m, suffix) && len(suffix) > len(best) {
+			best, profile = suffix, p
 		}
+	}
+	if best != "" {
+		return strings.TrimSuffix(m, best), profile
 	}
 	return m, "web"
 }

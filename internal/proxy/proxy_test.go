@@ -45,8 +45,11 @@ func postChat(t *testing.T, h http.Handler, body string) (int, map[string]any) {
 }
 
 func answerOf(out map[string]any) string {
-	choices := out["choices"].([]any)
-	msg := choices[0].(map[string]any)["message"].(map[string]any)
+	raw, ok := out["choices"].([]any)
+	if !ok || len(raw) == 0 {
+		return "" // error response has no choices; avoid panicking the test
+	}
+	msg := raw[0].(map[string]any)["message"].(map[string]any)
 	return msg["content"].(string)
 }
 
@@ -69,6 +72,26 @@ func TestChatDefaultsToWebProfile(t *testing.T) {
 	}
 	if out["model"] != "qwen3-14b-web" {
 		t.Fatalf("model = %v", out["model"])
+	}
+}
+
+func TestChatPassesThroughNonDefaultBaseModel(t *testing.T) {
+	h := testServer(t).Handler()
+	code, out := postChat(t, h, `{"model":"mistral-7b-agent","messages":[{"role":"user","content":"hi"}]}`)
+	if code != 200 || answerOf(out) != "from agent profile" {
+		t.Fatalf("code=%d out=%v", code, out)
+	}
+	// A base model different from the default is echoed back with its profile.
+	if out["model"] != "mistral-7b-agent" {
+		t.Fatalf("model = %v", out["model"])
+	}
+}
+
+func TestChatRejectsEmptyMessages(t *testing.T) {
+	h := testServer(t).Handler()
+	code, _ := postChat(t, h, `{"model":"qwen3-14b-agent","messages":[]}`)
+	if code != 400 {
+		t.Fatalf("code = %d", code)
 	}
 }
 
