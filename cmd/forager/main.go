@@ -23,11 +23,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/swarmery/forager/internal/agent"
 	"github.com/swarmery/forager/internal/llm"
+	"github.com/swarmery/forager/internal/memory"
 	"github.com/swarmery/forager/internal/proxy"
 	"github.com/swarmery/forager/internal/sandbox"
 	"github.com/swarmery/forager/internal/tools"
@@ -77,6 +79,7 @@ func main() {
 
 	client := llm.New(lmURL)
 	ws := &tools.Workspace{Root: workspace}
+	mem := &memory.Store{Dir: filepath.Join(workspace, "memory")}
 	runner := &sandbox.Docker{Container: sandboxCt, Workdir: "/workspace"}
 
 	research := tools.NewRegistry(
@@ -91,23 +94,32 @@ func main() {
 		tools.NewWriteFile(ws),
 		tools.NewListDir(ws),
 		tools.NewPython(runner, ws, "/workspace", 16000),
+		memory.NewSave(mem),
+		memory.NewSearch(mem),
 	)
 
-	mkAgent := func(reg *tools.Registry, prompt string) *agent.Agent {
+	mkAgent := func(reg *tools.Registry, prompt string, suffix func() string) *agent.Agent {
 		ag := agent.New(client, reg, agent.Config{
 			Model:         model,
 			MaxIterations: maxIter,
 			Temperature:   0.2,
 			SystemPrompt:  prompt,
+			PromptSuffix:  suffix,
 		})
 		if verbose || cmd == "serve" {
 			ag.OnEvent = func(format string, args ...any) { log.Printf(format, args...) }
 		}
 		return ag
 	}
+	memIndex := func() string {
+		if idx := mem.Index(4000); idx != "" {
+			return "Long-term memory index (use memory_search or read_file on memory/<file> for details):\n" + idx
+		}
+		return ""
+	}
 	agents := map[string]*agent.Agent{
-		"web":   mkAgent(research, ""), // empty -> default research prompt
-		"agent": mkAgent(full, agent.AgentSystemPrompt),
+		"web":   mkAgent(research, "", nil),
+		"agent": mkAgent(full, agent.AgentSystemPrompt, memIndex),
 	}
 
 	switch cmd {
