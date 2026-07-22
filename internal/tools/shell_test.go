@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/swarmery/forager/internal/sandbox"
 )
@@ -48,5 +49,17 @@ func TestShellRejectsEmptyCommand(t *testing.T) {
 	s := NewShell(&sandbox.Local{Workdir: t.TempDir()}, 16000)
 	if _, err := s.Call(context.Background(), `{"command":"  "}`); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestTruncateMiddleKeepsValidUTF8(t *testing.T) {
+	// Multibyte runes packed around the cut boundaries must not be split.
+	s := strings.Repeat("日本語", 200) // 3-byte runes, 1800 bytes
+	out := truncateMiddle(s, 120)
+	if !utf8.ValidString(out) {
+		t.Fatalf("truncated output is not valid UTF-8: %q", out)
+	}
+	if !strings.Contains(out, "chars truncated") {
+		t.Fatalf("missing truncation marker: %q", out)
 	}
 }

@@ -35,7 +35,10 @@ func TestLocalExecTimesOut(t *testing.T) {
 func TestLocalExecRunsInWorkdir(t *testing.T) {
 	dir := t.TempDir()
 	l := &Local{Workdir: dir}
-	res, _ := l.Exec(context.Background(), "pwd", 5*time.Second)
+	res, err := l.Exec(context.Background(), "pwd", 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(res.Output, dir) {
 		t.Fatalf("pwd = %q, want %q", res.Output, dir)
 	}
