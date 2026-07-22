@@ -3,6 +3,7 @@
     "core@swarmery": true,
     "infra-pack@swarmery": true,
     "lsp-pack@swarmery": true,
+    "uav-pack@swarmery": true,
     "web-pack@swarmery": true
   },
   "env": {

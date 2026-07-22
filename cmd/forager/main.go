@@ -7,10 +7,13 @@
 //
 // Config (flags override env):
 //
-//	LMSTUDIO_URL   default http://localhost:1234/v1
-//	SEARXNG_URL    default http://localhost:8888
-//	FORAGER_MODEL    default qwen3-14b
-//	FORAGER_LISTEN   default 127.0.0.1:8090
+//	LMSTUDIO_URL         default http://localhost:1234/v1
+//	SEARXNG_URL          default http://localhost:8888
+//	FORAGER_MODEL        default qwen3-14b
+//	FORAGER_LISTEN       default 127.0.0.1:8090
+//	FORAGER_WORKSPACE    default /srv/forager/workspace
+//	FORAGER_SANDBOX      default forager-sandbox
+//	FORAGER_CONFIG       default /etc/forager/config.json
 package main
 
 import (
@@ -21,12 +24,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/swarmery/forager/internal/agent"
+	"github.com/swarmery/forager/internal/config"
 	"github.com/swarmery/forager/internal/llm"
+	"github.com/swarmery/forager/internal/mcp"
+	"github.com/swarmery/forager/internal/memory"
 	"github.com/swarmery/forager/internal/proxy"
+	"github.com/swarmery/forager/internal/sandbox"
 	"github.com/swarmery/forager/internal/tools"
 )
 
@@ -48,6 +57,10 @@ func main() {
 		maxIter    int
 		fetchChars int
 		verbose    bool
+		workspace  string
+		sandboxCt  string
+		profile    string
+		configPath string
 	)
 
 	fs := flag.NewFlagSet("forager", flag.ExitOnError)
@@ -58,6 +71,10 @@ func main() {
 	fs.IntVar(&maxIter, "max-iter", 12, "max agent iterations per request")
 	fs.IntVar(&fetchChars, "fetch-chars", 12000, "max characters returned per fetch_page call")
 	fs.BoolVar(&verbose, "v", false, "log tool calls")
+	fs.StringVar(&workspace, "workspace", envOr("FORAGER_WORKSPACE", "/srv/forager/workspace"), "host path of the shared /workspace volume")
+	fs.StringVar(&sandboxCt, "sandbox", envOr("FORAGER_SANDBOX", "forager-sandbox"), "sandbox container name")
+	fs.StringVar(&profile, "profile", "web", "tool profile for ask mode: web or agent")
+	fs.StringVar(&configPath, "config", envOr("FORAGER_CONFIG", "/etc/forager/config.json"), "path to forager config file (MCP servers)")
 
 	if len(os.Args) < 2 {
 		usage()
@@ -67,17 +84,67 @@ func main() {
 	_ = fs.Parse(os.Args[2:])
 
 	client := llm.New(lmURL)
-	reg := tools.NewRegistry(
+	ws := &tools.Workspace{Root: workspace}
+	mem := &memory.Store{Dir: filepath.Join(workspace, "memory")}
+	runner := &sandbox.Docker{Container: sandboxCt, Workdir: "/workspace"}
+
+	research := tools.NewRegistry(
 		tools.NewSearch(searxURL, 8),
 		tools.NewFetch(fetchChars),
 	)
-	ag := agent.New(client, reg, agent.Config{
-		Model:         model,
-		MaxIterations: maxIter,
-		Temperature:   0.2,
-	})
-	if verbose || cmd == "serve" {
-		ag.OnEvent = func(format string, args ...any) { log.Printf(format, args...) }
+	fullTools := []tools.Tool{
+		tools.NewSearch(searxURL, 8),
+		tools.NewFetch(fetchChars),
+		tools.NewShell(runner, 16000),
+		tools.NewReadFile(ws, fetchChars),
+		tools.NewWriteFile(ws),
+		tools.NewListDir(ws),
+		tools.NewPython(runner, ws, "/workspace", 16000),
+		memory.NewSave(mem),
+		memory.NewSearch(mem),
+	}
+
+	cfgFile, err := config.Load(configPath)
+	if err != nil {
+		log.Fatalf("config: %v", err) // present-but-broken config is fatal on purpose
+	}
+	for name, sc := range cfgFile.MCPServers {
+		cl := mcp.NewClient(name, sc)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ts, terr := cl.Tools(ctx)
+		cancel()
+		if terr != nil {
+			log.Printf("warning: mcp server %q unavailable: %v", name, terr)
+			continue
+		}
+		log.Printf("mcp server %q connected: %d tools", name, len(ts))
+		fullTools = append(fullTools, ts...)
+	}
+
+	full := tools.NewRegistry(fullTools...)
+
+	mkAgent := func(reg *tools.Registry, prompt string, suffix func() string) *agent.Agent {
+		ag := agent.New(client, reg, agent.Config{
+			Model:         model,
+			MaxIterations: maxIter,
+			Temperature:   0.2,
+			SystemPrompt:  prompt,
+			PromptSuffix:  suffix,
+		})
+		if verbose || cmd == "serve" {
+			ag.OnEvent = func(format string, args ...any) { log.Printf(format, args...) }
+		}
+		return ag
+	}
+	memIndex := func() string {
+		if idx := mem.Index(4000); idx != "" {
+			return "Long-term memory index (use memory_search or read_file on memory/<file> for details):\n" + idx
+		}
+		return ""
+	}
+	agents := map[string]*agent.Agent{
+		"web":   mkAgent(research, "", nil),
+		"agent": mkAgent(full, agent.AgentSystemPrompt, memIndex),
 	}
 
 	switch cmd {
@@ -87,10 +154,14 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: forager ask [flags] \"your question\"")
 			os.Exit(2)
 		}
+		ag, ok := agents[profile]
+		if !ok {
+			log.Fatalf("unknown profile %q (want web or agent)", profile)
+		}
 		runAsk(ag, question)
 
 	case "serve":
-		runServe(ag, model, listen)
+		runServe(agents, model, listen)
 
 	default:
 		usage()
@@ -109,8 +180,8 @@ func runAsk(ag *agent.Agent, question string) {
 	fmt.Println(answer)
 }
 
-func runServe(ag *agent.Agent, model, listen string) {
-	srv := &proxy.Server{Agent: ag, Model: model + "-web"}
+func runServe(agents map[string]*agent.Agent, model, listen string) {
+	srv := &proxy.Server{Agents: agents, DefaultModel: model}
 	handler := srv.Handler()
 
 	var servers []*http.Server
@@ -122,7 +193,7 @@ func runServe(ag *agent.Agent, model, listen string) {
 		httpSrv := &http.Server{Addr: addr, Handler: handler}
 		servers = append(servers, httpSrv)
 		go func(a string, s *http.Server) {
-			log.Printf("forager serving OpenAI-compatible API on http://%s/v1 (default model %q)", a, model)
+			log.Printf("forager serving OpenAI-compatible API on http://%s/v1 (profiles web+agent, default model %q)", a, model)
 			if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("server %s: %v", a, err)
 			}
@@ -152,5 +223,9 @@ flags (after the command):
   -listen ADDRS    serve listen address(es), comma-sep    (env FORAGER_LISTEN, default 127.0.0.1:8090)
   -max-iter N      max agent iterations    (default 12)
   -fetch-chars N   max chars per page read (default 12000)
-  -v               verbose tool logging`)
+  -v               verbose tool logging
+  -workspace DIR   host path of /workspace volume  (env FORAGER_WORKSPACE, default /srv/forager/workspace)
+  -sandbox NAME    sandbox container name          (env FORAGER_SANDBOX, default forager-sandbox)
+  -profile NAME    ask-mode tool profile: web|agent (default web)
+  -config PATH     MCP servers config file (env FORAGER_CONFIG, default /etc/forager/config.json)`)
 }
