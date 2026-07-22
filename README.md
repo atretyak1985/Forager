@@ -60,6 +60,17 @@ curl http://localhost:8090/v1/chat/completions \
   -d '{"model":"qwen3-14b-web","messages":[{"role":"user","content":"Latest ArduPilot release and its changes?"}]}'
 ```
 
+### 4. Smoke test
+
+```bash
+# Full run — exercises sandbox, Python, memory, and MCP (if configured).
+# Optional base URL (defaults to http://localhost:8090); needs curl + jq.
+./deploy/smoke.sh [base-url]
+
+# Quick mode (healthz + models only) — also used as the deploy gate in deploy.sh:
+./deploy/smoke.sh --quick [base-url]
+```
+
 ### Install as systemd service
 
 ```bash
@@ -123,6 +134,47 @@ The sandbox container has outbound network access on purpose (so the model can
 non-root user with `no-new-privileges` and all Linux capabilities dropped, and
 mounts only `/workspace` from the host — but do not treat it as a hostile-code
 jail. Keep it, like the rest of forager, on a trusted local host.
+
+## Clients
+
+### Open WebUI
+
+`deploy/docker-compose.yml` includes an `open-webui` service that binds to `127.0.0.1:3000` and points at the Forager proxy on the Docker bridge (`http://172.17.0.1:8090/v1`).
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d open-webui
+# then open http://localhost:3000
+```
+
+To reach it from another machine, tunnel the port:
+
+```bash
+ssh -L 3000:localhost:3000 swarmery-server
+```
+
+In the Open WebUI model picker, select `<model>-web` for research-only or `<model>-agent` for the full toolset. `WEBUI_AUTH` is disabled because the port binds to localhost only — add a reverse proxy with auth before exposing it externally.
+
+### Telegram via n8n
+
+No custom bot code required. Build a flow with three nodes:
+
+1. **Telegram Trigger** — receives incoming messages.
+2. **HTTP Request** — `POST http://172.17.0.1:8090/v1/chat/completions` with body:
+   ```json
+   {"model":"<model>-agent","messages":[{"role":"user","content":"{{ $json.message.text }}"}]}
+   ```
+3. **Telegram Send Message** — reply text set to `{{ $json.choices[0].message.content }}`.
+
+### cron / automation
+
+Call the API from any cron job or shell script. Example daily brief:
+
+```bash
+0 7 * * * curl -s http://localhost:8090/v1/chat/completions \
+  -d @/etc/forager/daily-brief.json \
+  | jq -r '.choices[0].message.content' \
+  | mail -s "Daily brief" you@example.com
+```
 
 ## Notes
 

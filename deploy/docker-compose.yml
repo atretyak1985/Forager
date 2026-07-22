@@ -23,3 +23,20 @@ services:
     pids_limit: 256
     volumes:
       - ${FORAGER_WORKSPACE:-/srv/forager/workspace}:/workspace
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: forager-webui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:8080"
+    environment:
+      - OPENAI_API_BASE_URL=http://172.17.0.1:8090/v1
+      - OPENAI_API_KEY=forager-local
+      - ENABLE_OLLAMA_API=false
+      - WEBUI_AUTH=false
+    volumes:
+      - open-webui-data:/app/backend/data
+
+volumes:
+  open-webui-data:
