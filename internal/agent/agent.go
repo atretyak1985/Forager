@@ -35,6 +35,9 @@ type Config struct {
 	MaxIterations int     // cap on model round-trips (default 12)
 	Temperature   float64 // default 0.2 for factual research
 	SystemPrompt  string  // override the default research prompt if set
+	// PromptSuffix, if set, is evaluated per run and appended to the system
+	// prompt (used to inject the current memory index).
+	PromptSuffix func() string
 }
 
 type Agent struct {
@@ -75,7 +78,13 @@ func (a *Agent) RunModel(ctx context.Context, model string, history []llm.Messag
 
 	msgs := history
 	if len(msgs) == 0 || msgs[0].Role != "system" {
-		msgs = append([]llm.Message{{Role: "system", Content: a.cfg.SystemPrompt}}, msgs...)
+		prompt := a.cfg.SystemPrompt
+		if a.cfg.PromptSuffix != nil {
+			if extra := a.cfg.PromptSuffix(); extra != "" {
+				prompt += "\n\n" + extra
+			}
+		}
+		msgs = append([]llm.Message{{Role: "system", Content: prompt}}, msgs...)
 	}
 
 	temp := a.cfg.Temperature

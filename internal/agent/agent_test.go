@@ -110,3 +110,18 @@ func TestRunForcesSummaryWhenBudgetExhausted(t *testing.T) {
 		t.Fatalf("forced-summary message missing: %s", (*bodies)[1])
 	}
 }
+
+func TestPromptSuffixAppendedToSystemPrompt(t *testing.T) {
+	srv, bodies := scriptedLM(t, []string{respFinal})
+	reg := tools.NewRegistry(stubTool{name: "stub", result: "r"})
+	ag := New(llm.New(srv.URL), reg, Config{
+		Model: "m", MaxIterations: 2,
+		PromptSuffix: func() string { return "MEMORY-INDEX-MARKER" },
+	})
+	if _, err := ag.Ask(context.Background(), "q"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains((*bodies)[0], "MEMORY-INDEX-MARKER") {
+		t.Fatalf("suffix missing from system prompt: %s", (*bodies)[0])
+	}
+}
