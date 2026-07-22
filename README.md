@@ -23,9 +23,11 @@ Two modes:
 - **`forager ask "question"`** — one-shot CLI research.
 - **`forager serve`** — OpenAI-compatible proxy. Point any existing client at
   `http://localhost:8090/v1` instead of LM Studio and it transparently gets a
-  web-enabled model (reported as `<model>-web`). The `model` field in the request
-  is passed through to LM Studio (with or without the `-web` suffix); leave it
-  empty or use the default alias to get the configured default model.
+  tool-enabled model. The request `model` selects a profile by suffix:
+  `<model>-web` (research only) or `<model>-agent` (full toolset). The proxy
+  strips the profile suffix and forwards the base model to LM Studio; leave the
+  field empty or use the default alias to get the configured default model. See
+  [Profiles](#profiles) below.
 
 ## Setup
 
@@ -108,10 +110,19 @@ The sandbox container (built from `deploy/sandbox`) must be running for the agen
 docker compose -f deploy/docker-compose.yml up -d sandbox
 ```
 
-The workspace directory must exist and be writable by uid 1000:
+The workspace directory must exist and be owned by uid 1000 (the sandbox's
+`agent` user) so commands run inside the container can write to it — a
+root-owned `755` directory would let the container only read, and sandbox-side
+writes (`echo x > /workspace/out.txt`) would fail with "permission denied":
 ```bash
-mkdir -p /srv/forager/workspace && chmod 755 /srv/forager/workspace
+sudo mkdir -p /srv/forager/workspace && sudo chown 1000:1000 /srv/forager/workspace
 ```
+
+The sandbox container has outbound network access on purpose (so the model can
+`git clone`, `pip install`, etc.). It is CPU/memory/pids-limited, runs as a
+non-root user with `no-new-privileges` and all Linux capabilities dropped, and
+mounts only `/workspace` from the host — but do not treat it as a hostile-code
+jail. Keep it, like the rest of forager, on a trusted local host.
 
 ## Notes
 
