@@ -25,8 +25,8 @@ func (s *Store) Index(maxChars int) string {
 		return ""
 	}
 	idx := strings.TrimSpace(string(raw))
-	if len(idx) > maxChars {
-		idx = idx[:maxChars] + "\n... (index truncated)"
+	if r := []rune(idx); len(r) > maxChars {
+		idx = string(r[:maxChars]) + "\n... (index truncated)"
 	}
 	return idx
 }
@@ -104,8 +104,8 @@ func (t *Save) Call(_ context.Context, argsJSON string) (string, error) {
 	idx, _ := os.ReadFile(idxPath)
 	if !strings.Contains(string(idx), "("+file+")") {
 		firstLine := strings.SplitN(strings.TrimSpace(args.Content), "\n", 2)[0]
-		if len(firstLine) > 80 {
-			firstLine = firstLine[:80]
+		if r := []rune(firstLine); len(r) > 80 {
+			firstLine = string(r[:80])
 		}
 		entry := fmt.Sprintf("- [%s](%s) — %s\n", strings.TrimSpace(args.Topic), file, firstLine)
 		if err := os.WriteFile(idxPath, append(idx, []byte(entry)...), 0o644); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSaveCreatesFileAndIndex(t *testing.T) {
@@ -63,5 +64,17 @@ func TestIndexEmptyWhenNoMemory(t *testing.T) {
 	st := &Store{Dir: t.TempDir()}
 	if got := st.Index(4000); got != "" {
 		t.Fatalf("index = %q", got)
+	}
+}
+
+func TestIndexTruncatesOnRuneBoundary(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	// Cyrillic topic: bytes and runes differ, so a byte-slice cap would split a rune.
+	if _, err := NewSave(st).Call(context.Background(),
+		`{"topic":"Сервер","content":"мережеві налаштування свармері-сервера тут"}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Index(10); !utf8.ValidString(got) {
+		t.Fatalf("truncated index is not valid UTF-8: %q", got)
 	}
 }
