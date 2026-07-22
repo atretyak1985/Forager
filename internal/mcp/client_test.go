@@ -140,6 +140,28 @@ func TestCancelledCallTearsDownTransport(t *testing.T) {
 	}
 }
 
+func TestAdapterWrapsToolsForRegistry(t *testing.T) {
+	c := newFakeClient(t)
+	ts, err := c.Tools(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ts) != 2 {
+		t.Fatalf("tools = %d", len(ts))
+	}
+	def := ts[0].Definition()
+	if def.Function.Name != "mcp_fake_echo" {
+		t.Fatalf("name = %q", def.Function.Name)
+	}
+	out, err := ts[0].Call(context.Background(), `{"text":"hi"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "echo: hi" {
+		t.Fatalf("out = %q", out)
+	}
+}
+
 func TestHTTPTransport(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req jsonrpcRequest
