@@ -1,6 +1,7 @@
 // Package proxy exposes an OpenAI-compatible /v1/chat/completions endpoint.
-// Clients (n8n, Nytka, curl, chat UIs) talk to forager as if it were LM Studio,
-// and forager runs the web-research agent loop underneath.
+// Clients talk to forager as if it were LM Studio; forager runs the agent
+// loop underneath. The model suffix picks the tool profile:
+// "<model>-web" (research only) or "<model>-agent" (full toolset).
 package proxy
 
 import (
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,8 +18,8 @@ import (
 )
 
 type Server struct {
-	Agent *agent.Agent
-	Model string // default model alias reported by /v1/models (e.g. "qwen/qwen3.6-27b-web")
+	Agents       map[string]*agent.Agent // profile name -> agent ("web", "agent")
+	DefaultModel string                  // model id in LM Studio, e.g. "qwen3-14b"
 }
 
 type incomingRequest struct {
@@ -37,6 +39,26 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// splitModelProfile splits "qwen3-14b-agent" into ("qwen3-14b", "agent").
+// No known suffix means the default "web" profile with model passthrough,
+// so a "web" agent is expected to always be registered. When several profile
+// suffixes could match, the longest (most specific) one wins — this keeps the
+// result deterministic regardless of map iteration order.
+func (s *Server) splitModelProfile(m string) (base, profile string) {
+	m = strings.TrimSpace(m)
+	best := ""
+	for p := range s.Agents {
+		suffix := "-" + p
+		if strings.HasSuffix(m, suffix) && len(suffix) > len(best) {
+			best, profile = suffix, p
+		}
+	}
+	if best != "" {
+		return strings.TrimSuffix(m, best), profile
+	}
+	return m, "web"
+}
+
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var req incomingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -52,26 +74,32 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Model passthrough: clients may request any LM Studio model, with or
-	// without the "-web" suffix. Empty or matching the default alias -> config default.
-	model := strings.TrimSuffix(strings.TrimSpace(req.Model), "-web")
-	if model == strings.TrimSuffix(s.Model, "-web") {
-		model = ""
+	base, profile := s.splitModelProfile(req.Model)
+	ag, ok := s.Agents[profile]
+	if !ok {
+		httpError(w, http.StatusBadRequest, "unknown profile %q", profile)
+		return
+	}
+	if base == s.DefaultModel {
+		base = "" // config default
 	}
 
 	start := time.Now()
-	answer, _, err := s.Agent.RunModel(r.Context(), model, req.Messages)
+	answer, _, err := ag.RunModel(r.Context(), base, req.Messages)
 	if err != nil {
 		log.Printf("agent run failed: %v", err)
 		httpError(w, http.StatusBadGateway, "agent error: %v", err)
 		return
 	}
-	log.Printf("request served in %s (model %q)", time.Since(start).Round(time.Millisecond), req.Model)
+	log.Printf("request served in %s (model %q, profile %s)",
+		time.Since(start).Round(time.Millisecond), req.Model, profile)
 
-	reported := s.Model
-	if model != "" {
-		reported = model + "-web"
+	reported := s.DefaultModel
+	if base != "" {
+		reported = base
 	}
+	reported += "-" + profile
+
 	resp := map[string]any{
 		"id":      fmt.Sprintf("forager-%d", time.Now().UnixNano()),
 		"object":  "chat.completion",
@@ -88,13 +116,20 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
+	profiles := make([]string, 0, len(s.Agents))
+	for p := range s.Agents {
+		profiles = append(profiles, p)
+	}
+	sort.Strings(profiles)
+
+	data := make([]map[string]any, 0, len(profiles))
+	for _, p := range profiles {
+		data = append(data, map[string]any{
+			"id": s.DefaultModel + "-" + p, "object": "model", "owned_by": "forager",
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"object": "list",
-		"data": []map[string]any{
-			{"id": s.Model, "object": "model", "owned_by": "forager"},
-		},
-	})
+	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
 }
 
 func httpError(w http.ResponseWriter, code int, format string, args ...any) {
