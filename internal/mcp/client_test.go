@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 type pipeConn struct {
@@ -113,6 +114,29 @@ func TestCallContextTimeout(t *testing.T) {
 	cancel()
 	if _, err := c.CallTool(ctx, "echo", nil); err == nil {
 		t.Fatal("expected error on cancelled context")
+	}
+}
+
+func TestCancelledCallTearsDownTransport(t *testing.T) {
+	// A silent server: the call blocks on read, then ctx is cancelled while
+	// waiting. The client must tear the transport down (unblocking and reaping
+	// the reader goroutine) rather than leaving it to race a later call. Run
+	// under -race to catch a leaked reader sharing the bufio.Reader.
+	clientR, _ := io.Pipe()
+	serverR, clientW := io.Pipe()
+	go io.Copy(io.Discard, serverR)
+	c := NewClientConn("silent", pipeConn{r: clientR, w: clientW})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
+	if _, err := c.CallTool(ctx, "echo", map[string]any{"text": "x"}); err == nil {
+		t.Fatal("expected error on cancelled call")
+	}
+	// Teardown nils the connection; a NewClientConn client has no Command to
+	// respawn, so the next call must fail to reconnect — proving the stale
+	// (and now half-closed) pipe was not silently reused.
+	if _, err := c.CallTool(context.Background(), "echo", nil); err == nil {
+		t.Fatal("expected reconnect failure after teardown")
 	}
 }
 

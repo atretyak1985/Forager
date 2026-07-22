@@ -2,7 +2,10 @@
 // stdio or streamable HTTP, supporting initialize / tools/list / tools/call.
 package mcp
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 const protocolVersion = "2025-06-18"
 
@@ -56,13 +59,5 @@ func (r callToolResult) text() string {
 	if len(parts) == 0 {
 		return "(tool returned no text content)"
 	}
-	return joinLines(parts)
-}
-
-func joinLines(parts []string) string {
-	out := parts[0]
-	for _, p := range parts[1:] {
-		out += "\n" + p
-	}
-	return out
+	return strings.Join(parts, "\n")
 }

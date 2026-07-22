@@ -90,9 +90,11 @@ func (c *Client) startLocked(ctx context.Context) error {
 		}
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
+			stdin.Close() // avoid leaking the stdin pipe fd
 			return err
 		}
 		if err := cmd.Start(); err != nil {
+			stdin.Close()
 			return fmt.Errorf("start mcp server %s: %w", c.Name, err)
 		}
 		c.proc = cmd
@@ -163,8 +165,13 @@ func (c *Client) callLocked(ctx context.Context, method string, params any) (jso
 	}()
 	select {
 	case <-ctx.Done():
-		// The reader goroutine stays blocked; the next transport error
-		// triggers a restart, which recreates the pipe.
+		// Tear the transport down so the reader goroutine unblocks and exits
+		// (closing the pipe in tests, killing the child process in prod) rather
+		// than leaking — a leaked reader would race other goroutines on the
+		// shared bufio.Reader and could steal a later call's response. The next
+		// call reconnects via startLocked (conn == nil).
+		c.closeLocked()
+		<-ch // drain the reader's final send so the goroutine is fully gone
 		return nil, ctx.Err()
 	case r := <-ch:
 		if r.err != nil {

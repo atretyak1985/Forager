@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -37,6 +38,7 @@ func (c *Client) callHTTP(ctx context.Context, method string, params any) (json.
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		io.Copy(io.Discard, resp.Body) // drain so the connection can be reused
 		return nil, fmt.Errorf("mcp %s returned HTTP %d", c.Name, resp.StatusCode)
 	}
 	if s := resp.Header.Get("Mcp-Session-Id"); s != "" {
@@ -62,7 +64,7 @@ func (c *Client) callHTTP(ctx context.Context, method string, params any) (json.
 				goto done
 			}
 		}
-		return nil, fmt.Errorf("mcp %s: SSE stream ended without response", c.Name)
+		return nil, fmt.Errorf("mcp %s: SSE stream ended without response: %w", c.Name, sc.Err())
 	default:
 		if err := json.NewDecoder(resp.Body).Decode(&jr); err != nil {
 			return nil, fmt.Errorf("mcp %s: decode: %w", c.Name, err)
@@ -84,6 +86,10 @@ func (c *Client) notifyHTTP(ctx context.Context, method string) error {
 	if err != nil {
 		return err
 	}
+	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("mcp %s notification %s returned HTTP %d", c.Name, method, resp.StatusCode)
+	}
 	return nil
 }
