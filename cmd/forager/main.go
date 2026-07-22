@@ -13,6 +13,7 @@
 //	FORAGER_LISTEN       default 127.0.0.1:8090
 //	FORAGER_WORKSPACE    default /srv/forager/workspace
 //	FORAGER_SANDBOX      default forager-sandbox
+//	FORAGER_CONFIG       default /etc/forager/config.json
 package main
 
 import (
@@ -26,9 +27,12 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/swarmery/forager/internal/agent"
+	"github.com/swarmery/forager/internal/config"
 	"github.com/swarmery/forager/internal/llm"
+	"github.com/swarmery/forager/internal/mcp"
 	"github.com/swarmery/forager/internal/memory"
 	"github.com/swarmery/forager/internal/proxy"
 	"github.com/swarmery/forager/internal/sandbox"
@@ -56,6 +60,7 @@ func main() {
 		workspace  string
 		sandboxCt  string
 		profile    string
+		configPath string
 	)
 
 	fs := flag.NewFlagSet("forager", flag.ExitOnError)
@@ -69,6 +74,7 @@ func main() {
 	fs.StringVar(&workspace, "workspace", envOr("FORAGER_WORKSPACE", "/srv/forager/workspace"), "host path of the shared /workspace volume")
 	fs.StringVar(&sandboxCt, "sandbox", envOr("FORAGER_SANDBOX", "forager-sandbox"), "sandbox container name")
 	fs.StringVar(&profile, "profile", "web", "tool profile for ask mode: web or agent")
+	fs.StringVar(&configPath, "config", envOr("FORAGER_CONFIG", "/etc/forager/config.json"), "path to forager config file (MCP servers)")
 
 	if len(os.Args) < 2 {
 		usage()
@@ -86,7 +92,7 @@ func main() {
 		tools.NewSearch(searxURL, 8),
 		tools.NewFetch(fetchChars),
 	)
-	full := tools.NewRegistry(
+	fullTools := []tools.Tool{
 		tools.NewSearch(searxURL, 8),
 		tools.NewFetch(fetchChars),
 		tools.NewShell(runner, 16000),
@@ -96,7 +102,26 @@ func main() {
 		tools.NewPython(runner, ws, "/workspace", 16000),
 		memory.NewSave(mem),
 		memory.NewSearch(mem),
-	)
+	}
+
+	cfgFile, err := config.Load(configPath)
+	if err != nil {
+		log.Fatalf("config: %v", err) // present-but-broken config is fatal on purpose
+	}
+	for name, sc := range cfgFile.MCPServers {
+		cl := mcp.NewClient(name, sc)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ts, terr := cl.Tools(ctx)
+		cancel()
+		if terr != nil {
+			log.Printf("warning: mcp server %q unavailable: %v", name, terr)
+			continue
+		}
+		log.Printf("mcp server %q connected: %d tools", name, len(ts))
+		fullTools = append(fullTools, ts...)
+	}
+
+	full := tools.NewRegistry(fullTools...)
 
 	mkAgent := func(reg *tools.Registry, prompt string, suffix func() string) *agent.Agent {
 		ag := agent.New(client, reg, agent.Config{
@@ -201,5 +226,6 @@ flags (after the command):
   -v               verbose tool logging
   -workspace DIR   host path of /workspace volume  (env FORAGER_WORKSPACE, default /srv/forager/workspace)
   -sandbox NAME    sandbox container name          (env FORAGER_SANDBOX, default forager-sandbox)
-  -profile NAME    ask-mode tool profile: web|agent (default web)`)
+  -profile NAME    ask-mode tool profile: web|agent (default web)
+  -config PATH     MCP servers config file (env FORAGER_CONFIG, default /etc/forager/config.json)`)
 }
