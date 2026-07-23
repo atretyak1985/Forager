@@ -1,32 +1,73 @@
 # Forager
 
-Web research tools for local LM Studio models. Single Go binary, zero dependencies (stdlib only).
+**Turn any local LM Studio model into a tool-using agent** — web research, an
+isolated Linux sandbox (shell + Python), a persistent workspace with long-term
+memory, and any MCP server you point it at — all behind a drop-in
+OpenAI-compatible API. Single Go binary, **stdlib-only** (zero external
+dependencies).
 
-Gives any local model loaded in LM Studio the ability to search the web (via a local SearXNG instance) and read pages, running the full agentic research loop: search → fetch → follow-up → final answer with sources.
+Forager is the *hands and the harness*; your local model is the *brain*. It runs
+the full agentic loop — think → call a tool → read the result → repeat — until
+the model produces a final answer.
 
 ## Architecture
 
 ```
-client (curl / chat UI)
-        │  OpenAI-compatible API
-        ▼
-  forager serve (:8090)           ← agent loop lives here
-        │                    ╲
-        │ /v1/chat/completions ╲ tool execution
-        ▼                       ▼
-  LM Studio (:1234)        SearXNG (:8888) + direct page fetch
-  (the "brain")            (the "hands")
+  curl · Open WebUI · n8n/Telegram · cron · CLI
+                     │
+                     │  OpenAI-compatible API  (/v1/chat/completions, /v1/models)
+                     ▼
+        ┌──────────────────────────────────────────┐
+        │           forager serve  :8090           │
+        │                                          │
+        │   proxy ──▶  agent loop  ◀── tool results│
+        │              │      ▲                     │
+        └──────────────┼──────┼─────────────────────┘
+                       │      │
+      ┌────────────────┘      └─────────────────────────────┐
+      ▼ prompt + tool defs                    tool calls ▲   │
+ LM Studio :1234                                         │   ▼
+ (the model / "brain")                        ┌──────────┴───────────┐
+                                              │        tools         │
+                                              ├──────────────────────┤
+                                              │ SearXNG :8888        │ web_search
+                                              │ + direct page fetch  │ fetch_page
+                                              │                      │
+                                              │ sandbox container    │ run_command
+                                              │ (docker exec)        │ run_python
+                                              │                      │
+                                              │ /workspace volume    │ read/write_file, list_dir
+                                              │ workspace/memory/    │ memory_save/search
+                                              │                      │
+                                              │ MCP servers          │ mcp_<server>_<tool>
+                                              │ (stdio / HTTP)       │
+                                              └──────────────────────┘
 ```
 
-Two modes:
+The agent loop (one `/v1/chat/completions` request):
 
-- **`forager ask "question"`** — one-shot CLI research.
+```
+   user message
+        │
+        ▼
+   ask the model  ──────────────────────────▶  no tool calls?  ──▶  final answer
+        ▲   │                                                        + source URLs
+        │   │ tool_calls
+   results │ ▼
+        │  execute tool(s):  search · fetch · shell · python ·
+        │  files · memory · MCP        (errors go back as text)
+        └──────────────────────────────  repeat, up to  -max-iter
+```
+
+Two ways to run it:
+
+- **`forager ask "question"`** — one-shot from the CLI (`-profile web|agent`).
 - **`forager serve`** — OpenAI-compatible proxy. Point any existing client at
   `http://localhost:8090/v1` instead of LM Studio and it transparently gets a
   tool-enabled model. The request `model` selects a profile by suffix:
   `<model>-web` (research only) or `<model>-agent` (full toolset). The proxy
-  strips the profile suffix and forwards the base model to LM Studio; leave the
-  field empty or use the default alias to get the configured default model. See
+  strips the suffix and forwards the base model to LM Studio; leave the field
+  empty or use the default alias for the configured default model. See
   [Profiles](#profiles) below.
 
 ## Setup
@@ -89,6 +130,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now forager
 | `FORAGER_LISTEN` / `-listen` | `127.0.0.1:8090` | proxy bind address(es), comma-separated |
 | `FORAGER_WORKSPACE` / `-workspace` | `/srv/forager/workspace` | host path of the shared `/workspace` volume |
 | `FORAGER_SANDBOX` / `-sandbox` | `forager-sandbox` | sandbox container name |
+| `FORAGER_CONFIG` / `-config` | `/etc/forager/config.json` | config file for [MCP servers](#mcp-servers) |
 | `-profile` | `web` | ask-mode tool profile: `web` or `agent` |
 | `-max-iter` | `12` | agent round-trip cap |
 | `-fetch-chars` | `12000` | max chars per page read |
@@ -110,11 +152,32 @@ externally without auth.
 - **`read_file(path, offset)`** — read workspace files under `/workspace`; offset for pagination.
 - **`write_file(path, content)`** — write workspace files under `/workspace`.
 - **`list_dir(path)`** — list directory contents under `/workspace`.
+- **`memory_save(topic, content)`** — save a fact to long-term memory (survives sessions).
+- **`memory_search(query)`** — search saved memory notes.
+- **`mcp_<server>_<tool>(...)`** — any tool exposed by a configured [MCP server](#mcp-servers).
+
+The saved-memory index (`workspace/memory/MEMORY.md`) is injected into the agent
+profile's system prompt on every request, so the model always knows what it has
+remembered.
 
 ## Profiles
 
-- **`<model>-web`** — research mode with web search and page fetch only. Both `/v1/models` lists this, and ask mode defaults to this.
-- **`<model>-agent`** — full toolset: research (web search/fetch) + sandbox execution (bash/Python) + file operations (read/write/list under `/workspace`). Request model as `<model>-agent` or use `-profile agent` in ask mode.
+The model-name suffix picks the tool set. Both are advertised by `GET /v1/models`,
+so in a chat UI they appear as two selectable "models".
+
+| Capability | `<model>-web` | `<model>-agent` |
+|---|:---:|:---:|
+| `web_search`, `fetch_page` | ✅ | ✅ |
+| `run_command`, `run_python` (sandbox) | — | ✅ |
+| `read_file`, `write_file`, `list_dir` | — | ✅ |
+| `memory_save`, `memory_search` | — | ✅ |
+| `mcp_<server>_<tool>` | — | ✅ |
+| needs the sandbox container running | no | **yes** |
+| ask-mode flag | *default* | `-profile agent` |
+
+- **`<model>-web`** — research only; the safe default (no code execution, no
+  filesystem access). This is what `forager ask` uses unless told otherwise.
+- **`<model>-agent`** — the full harness. Requires the sandbox container (below).
 
 The sandbox container (built from `deploy/sandbox`) must be running for the agent profile to work:
 ```bash
@@ -134,6 +197,31 @@ The sandbox container has outbound network access on purpose (so the model can
 non-root user with `no-new-privileges` and all Linux capabilities dropped, and
 mounts only `/workspace` from the host — but do not treat it as a hostile-code
 jail. Keep it, like the rest of forager, on a trusted local host.
+
+## MCP servers
+
+The agent profile can call tools from any number of [Model Context
+Protocol](https://modelcontextprotocol.io) servers — over **stdio** (a spawned
+child process) or **streamable HTTP**. Define them in the config file
+(`-config`, default `/etc/forager/config.json`):
+
+```json
+{
+  "mcpServers": {
+    "git":        { "command": "mcp-server-git", "args": ["--repo", "/workspace"] },
+    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"] },
+    "home":       { "url": "http://homeassistant:8123/mcp" }
+  }
+}
+```
+
+Each discovered tool is registered as `mcp_<server>_<tool>` (e.g. `mcp_git_status`).
+Servers are connected once at startup:
+
+- A **missing** config file is fine — no MCP tools, no error.
+- A server that is **down or misbehaving** is logged as a warning and skipped;
+  it never blocks or crashes `serve`.
+- Only a **present-but-unparseable** config file is fatal.
 
 ## Clients
 
